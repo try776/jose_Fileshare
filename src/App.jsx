@@ -1,17 +1,16 @@
 import { useState, useEffect } from 'react'
-import { uploadData, getUrl } from 'aws-amplify/storage'
+import { uploadData, getUrl, list, remove } from 'aws-amplify/storage' // 'list' und 'remove' importieren
 import { Authenticator } from '@aws-amplify/ui-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { 
   FaCloudUploadAlt, FaCheckCircle, FaCopy, FaSignOutAlt, 
-  FaFile, FaFilePdf, FaFileImage, FaFileCode, FaFileArchive, FaListAlt, FaDownload, FaSpinner 
+  FaFile, FaFilePdf, FaFileImage, FaFileCode, FaFileArchive, FaListAlt, FaDownload, FaSpinner, FaTrash 
 } from 'react-icons/fa'
 import '@aws-amplify/ui-react/styles.css'
 import './App.css'
 
 // --- 1. Helper Components ---
 
-// Icon Helper
 const getFileIcon = (filename) => {
   if (!filename) return <FaFile />;
   const ext = filename.split('.').pop().toLowerCase();
@@ -22,7 +21,6 @@ const getFileIcon = (filename) => {
   return <FaFile />;
 }
 
-// Toast Component
 const Toast = ({ msg }) => (
   <div className="toast">
     <FaCheckCircle /> {msg}
@@ -37,15 +35,11 @@ function DownloadView({ filename }) {
   useEffect(() => {
     const fetchUrl = async () => {
       try {
-        // Generiere einen frischen Link für den Gast
         const linkResult = await getUrl({
           path: `public/${filename}`,
           options: { validateObjectExistence: true, expiresIn: 900 },
         });
         setDownloadUrl(linkResult.url.toString());
-        
-        // Optional: Direkt weiterleiten
-        // window.location.href = linkResult.url.toString();
       } catch (err) {
         setError('Datei nicht gefunden oder abgelaufen.');
       }
@@ -79,17 +73,53 @@ function DownloadView({ filename }) {
   );
 }
 
-// --- 3. Admin Mode (Upload) ---
+// --- 3. Admin Mode (Upload & Manage) ---
 function AdminView({ signOut, user }) {
   const [file, setFile] = useState(null)
   const [customName, setCustomName] = useState('')
   const [isDragging, setIsDragging] = useState(false)
   const [progress, setProgress] = useState(0)
   const [isUploading, setIsUploading] = useState(false)
-  const [uploadHistory, setUploadHistory] = useState([])
+  const [fileList, setFileList] = useState([]) // Umbenannt von uploadHistory zu fileList
   const [copiedId, setCopiedId] = useState(null)
   const [toastMsg, setToastMsg] = useState('')
 
+  // --- Lade Dateien beim Start ---
+  useEffect(() => {
+    fetchFiles();
+  }, []);
+
+  const fetchFiles = async () => {
+    try {
+      const result = await list({
+        path: 'public/',
+        options: { listAll: true }
+      });
+      
+      // Transformiere die rohen S3-Daten in unser Format
+      // Filtere Ordner heraus (size > 0)
+      const files = result.items
+        .filter(item => item.size > 0) 
+        .sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified)) // Neueste zuerst
+        .map(item => {
+          // Pfad 'public/Name.pdf' -> Name extrahieren
+          const name = item.path.split('/').pop();
+          return {
+            id: item.path, // Pfad als ID nutzen
+            name: name,
+            // Wir generieren den Smart Link on-the-fly für die Anzeige
+            url: `${window.location.origin}/?file=${encodeURIComponent(name)}`,
+            date: new Date(item.lastModified).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', day: '2-digit', month: '2-digit'})
+          };
+        });
+
+      setFileList(files);
+    } catch (error) {
+      console.error("Fehler beim Laden:", error);
+    }
+  };
+
+  // Toast Timer
   useEffect(() => {
     if (toastMsg) {
       const timer = setTimeout(() => setToastMsg(''), 3000);
@@ -111,18 +141,12 @@ function AdminView({ signOut, user }) {
         },
       }).result;
 
-      // TRICK: Wir erstellen den kurzen "App-Link" statt den langen AWS Link
       const shortLink = `${window.location.origin}/?file=${encodeURIComponent(customName)}`;
-      
       navigator.clipboard.writeText(shortLink);
-      setToastMsg('Smart-Link kopiert! 📋');
-
-      setUploadHistory([{
-        id: Date.now(),
-        name: customName,
-        url: shortLink, // Speichere den kurzen Link!
-        date: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
-      }, ...uploadHistory]);
+      setToastMsg('Datei hochgeladen & Link kopiert! 📋');
+      
+      // Liste neu laden statt nur lokal hinzufügen (sicherer)
+      await fetchFiles();
       
       setIsUploading(false);
       setFile(null);
@@ -133,6 +157,19 @@ function AdminView({ signOut, user }) {
       setToastMsg('Fehler: ' + error.message);
     }
   }
+
+  // --- Lösch-Funktion ---
+  const handleDelete = async (path) => {
+    if(!window.confirm("Möchtest du diese Datei wirklich löschen?")) return;
+
+    try {
+      await remove({ path });
+      setToastMsg('Datei gelöscht 🗑️');
+      await fetchFiles(); // Liste aktualisieren
+    } catch (error) {
+      setToastMsg('Löschen fehlgeschlagen: ' + error.message);
+    }
+  };
 
   return (
     <div className="app-container">
@@ -181,11 +218,11 @@ function AdminView({ signOut, user }) {
         )}
       </div>
 
-      {uploadHistory.length > 0 && (
+      {fileList.length > 0 && (
         <div className="card history-container">
-          <h3><FaListAlt /> Deine Dateien</h3>
+          <h3><FaListAlt /> Alle Dateien ({fileList.length})</h3>
           <div className="history-list">
-            {uploadHistory.map((item, index) => (
+            {fileList.map((item, index) => (
               <div key={item.id} className="history-item">
                 <div className="file-meta">
                   <div className="file-icon">{getFileIcon(item.name)}</div>
@@ -200,11 +237,22 @@ function AdminView({ signOut, user }) {
                     navigator.clipboard.writeText(item.url);
                     setCopiedId(item.id);
                     setTimeout(() => setCopiedId(null), 2000);
-                  }}>
+                  }} title="Kopieren">
                     {copiedId === item.id ? <FaCheckCircle /> : <FaCopy />}
                   </button>
+                  
+                  {/* Lösch Button */}
+                  <button 
+                    className="btn-icon" 
+                    style={{backgroundColor: 'rgba(255, 0, 0, 0.2)', color: '#ff6b6b'}}
+                    onClick={() => handleDelete(item.id)}
+                    title="Löschen"
+                  >
+                    <FaTrash />
+                  </button>
                 </div>
-                {/* Jetzt ist der QR Code super lesbar, weil die URL kurz ist! */}
+                
+                {/* QR Code nur beim neuesten Item */}
                 {index === 0 && (
                   <div className="qr-box">
                      <QRCodeSVG value={item.url} size={150} level={"M"} includeMargin={true} />
@@ -221,16 +269,13 @@ function AdminView({ signOut, user }) {
 
 // --- 4. Main App Switcher ---
 function App() {
-  // Prüfe, ob wir im "Download Modus" sind (via URL Parameter ?file=...)
   const params = new URLSearchParams(window.location.search);
   const shareFile = params.get('file');
 
   if (shareFile) {
-    // Zeige Download-Seite für GÄSTE (Kein Authenticator!)
     return <DownloadView filename={shareFile} />;
   }
 
-  // Zeige Admin-Bereich (Mit Login)
   return (
     <Authenticator>
       {(props) => <AdminView {...props} />}
