@@ -1,42 +1,48 @@
-#root {
-  max-width: 1280px;
+.app-container {
+  width: 100%;
+  max-width: 800px;
   margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+.navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  background: #333;
+  border-radius: 8px;
+  margin-bottom: 2rem;
 }
 
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.upload-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  background: #2a2a2a;
+  border-radius: 12px;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
+.file-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  text-align: left;
 }
 
-.card {
-  padding: 2em;
+.name-input {
+  width: 100%;
+  padding: 0.5rem;
+  margin-top: 0.5rem;
+  border-radius: 4px;
+  border: 1px solid #555;
+  background: #1a1a1a;
+  color: white;
 }
 
-.read-the-docs {
-  color: #888;
+.result-box {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: #1a4a1a;
+  border-radius: 8px;
+  word-break: break-all;
 }
