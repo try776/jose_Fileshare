@@ -1,0 +1,23 @@
+{
+  "dev": {
+    "awscloudformation": {
+      "AuthRoleName": "amplify-josefileshare-dev-e3342-authRole",
+      "UnauthRoleArn": "arn:aws:iam::746669223294:role/amplify-josefileshare-dev-e3342-unauthRole",
+      "AuthRoleArn": "arn:aws:iam::746669223294:role/amplify-josefileshare-dev-e3342-authRole",
+      "Region": "sa-east-1",
+      "DeploymentBucketName": "amplify-josefileshare-dev-e3342-deployment",
+      "UnauthRoleName": "amplify-josefileshare-dev-e3342-unauthRole",
+      "StackName": "amplify-josefileshare-dev-e3342",
+      "StackId": "arn:aws:cloudformation:sa-east-1:746669223294:stack/amplify-josefileshare-dev-e3342/c1ee4750-c7b2-11f0-bd98-026620182a5d",
+      "AmplifyAppId": "d381l1973a8dwy"
+    },
+    "categories": {
+      "auth": {
+        "josefilesharec395ecea": {}
+      },
+      "storage": {
+        "josefileshare": {}
+      }
+    }
+  }
+}
