@@ -4,12 +4,83 @@ import { Authenticator } from '@aws-amplify/ui-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { 
   FaCloudUploadAlt, FaCheckCircle, FaCopy, FaSignOutAlt, 
-  FaFile, FaFilePdf, FaFileImage, FaFileCode, FaFileArchive, FaListAlt 
+  FaFile, FaFilePdf, FaFileImage, FaFileCode, FaFileArchive, FaListAlt, FaDownload, FaSpinner 
 } from 'react-icons/fa'
 import '@aws-amplify/ui-react/styles.css'
 import './App.css'
 
-function App() {
+// --- 1. Helper Components ---
+
+// Icon Helper
+const getFileIcon = (filename) => {
+  if (!filename) return <FaFile />;
+  const ext = filename.split('.').pop().toLowerCase();
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return <FaFileImage />;
+  if (['pdf'].includes(ext)) return <FaFilePdf />;
+  if (['zip', 'rar', '7z', 'tar'].includes(ext)) return <FaFileArchive />;
+  if (['js', 'jsx', 'ts', 'tsx', 'html', 'css', 'json'].includes(ext)) return <FaFileCode />;
+  return <FaFile />;
+}
+
+// Toast Component
+const Toast = ({ msg }) => (
+  <div className="toast">
+    <FaCheckCircle /> {msg}
+  </div>
+);
+
+// --- 2. Download Mode (Für Gäste) ---
+function DownloadView({ filename }) {
+  const [downloadUrl, setDownloadUrl] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const fetchUrl = async () => {
+      try {
+        // Generiere einen frischen Link für den Gast
+        const linkResult = await getUrl({
+          path: `public/${filename}`,
+          options: { validateObjectExistence: true, expiresIn: 900 },
+        });
+        setDownloadUrl(linkResult.url.toString());
+        
+        // Optional: Direkt weiterleiten
+        // window.location.href = linkResult.url.toString();
+      } catch (err) {
+        setError('Datei nicht gefunden oder abgelaufen.');
+      }
+    };
+    fetchUrl();
+  }, [filename]);
+
+  return (
+    <div className="app-container" style={{textAlign: 'center', marginTop: '10vh'}}>
+      <div className="card">
+        <h2>Datei wird bereitgestellt</h2>
+        <div style={{fontSize: '4rem', margin: '2rem 0', color: 'var(--accent)'}}>
+          {getFileIcon(filename)}
+        </div>
+        <h3 style={{wordBreak: 'break-all'}}>{filename}</h3>
+        
+        {error ? (
+          <p style={{color: 'red'}}>{error}</p>
+        ) : downloadUrl ? (
+          <a href={downloadUrl} className="btn-primary" style={{textDecoration: 'none', display:'inline-block'}}>
+            <FaDownload style={{marginRight: '8px'}}/> Jetzt herunterladen
+          </a>
+        ) : (
+          <p><FaSpinner className="icon-spin" /> Generiere Secure Link...</p>
+        )}
+      </div>
+      <p style={{marginTop: '2rem', color: '#666', fontSize: '0.8rem'}}>
+        Powered by Jose's FileShare
+      </p>
+    </div>
+  );
+}
+
+// --- 3. Admin Mode (Upload) ---
+function AdminView({ signOut, user }) {
   const [file, setFile] = useState(null)
   const [customName, setCustomName] = useState('')
   const [isDragging, setIsDragging] = useState(false)
@@ -17,19 +88,8 @@ function App() {
   const [isUploading, setIsUploading] = useState(false)
   const [uploadHistory, setUploadHistory] = useState([])
   const [copiedId, setCopiedId] = useState(null)
-  const [toastMsg, setToastMsg] = useState('') // Feature: Toast Notification
+  const [toastMsg, setToastMsg] = useState('')
 
-  // Feature: Smart Icons helper
-  const getFileIcon = (filename) => {
-    const ext = filename.split('.').pop().toLowerCase();
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return <FaFileImage />;
-    if (['pdf'].includes(ext)) return <FaFilePdf />;
-    if (['zip', 'rar', '7z', 'tar'].includes(ext)) return <FaFileArchive />;
-    if (['js', 'jsx', 'ts', 'tsx', 'html', 'css', 'json'].includes(ext)) return <FaFileCode />;
-    return <FaFile />;
-  }
-
-  // Toast Timer
   useEffect(() => {
     if (toastMsg) {
       const timer = setTimeout(() => setToastMsg(''), 3000);
@@ -37,31 +97,12 @@ function App() {
     }
   }, [toastMsg]);
 
-  const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true); }
-  const handleDragLeave = () => { setIsDragging(false); }
-  const handleDrop = (e) => {
-    e.preventDefault(); setIsDragging(false);
-    const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile) processFile(droppedFile);
-  }
-  const handleFileSelect = (e) => {
-    const selectedFile = e.target.files[0];
-    if (selectedFile) processFile(selectedFile);
-  }
-
-  const processFile = (fileData) => {
-    setFile(fileData);
-    setCustomName(fileData.name);
-    setProgress(0);
-  }
-
   const handleUpload = async () => {
     if (!file || !customName) return;
     setIsUploading(true);
     try {
-      const path = `public/${customName}`;
       await uploadData({
-        path: path,
+        path: `public/${customName}`,
         data: file,
         options: {
           onProgress: ({ transferredBytes, totalBytes }) => {
@@ -70,150 +111,131 @@ function App() {
         },
       }).result;
 
-      const linkResult = await getUrl({
-        path: path,
-        options: { validateObjectExistence: true, expiresIn: 900 },
-      });
-
-      const link = linkResult.url.toString();
+      // TRICK: Wir erstellen den kurzen "App-Link" statt den langen AWS Link
+      const shortLink = `${window.location.origin}/?file=${encodeURIComponent(customName)}`;
       
-      // Feature: Auto-Copy to Clipboard
-      navigator.clipboard.writeText(link);
-      setToastMsg('Link automatisch kopiert! 📋');
+      navigator.clipboard.writeText(shortLink);
+      setToastMsg('Smart-Link kopiert! 📋');
 
-      const newEntry = {
+      setUploadHistory([{
         id: Date.now(),
         name: customName,
-        url: link,
+        url: shortLink, // Speichere den kurzen Link!
         date: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
-      };
-
-      setUploadHistory([newEntry, ...uploadHistory]);
+      }, ...uploadHistory]);
       
-      // Cleanup
       setIsUploading(false);
       setFile(null);
       setCustomName('');
       setProgress(0);
-
     } catch (error) {
-      console.error(error);
       setIsUploading(false);
-      setToastMsg('Upload Fehler: ' + error.message);
+      setToastMsg('Fehler: ' + error.message);
     }
   }
 
-  const copyToClipboard = (text, id) => {
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setToastMsg('Link in die Zwischenablage kopiert!');
-    setTimeout(() => setCopiedId(null), 2000);
-  }
-
   return (
-    <Authenticator>
-      {({ signOut, user }) => (
-        <div className="app-container">
-          {/* Toast Notification */}
-          {toastMsg && (
-            <div className="toast">
-              <FaCheckCircle /> {toastMsg}
-            </div>
-          )}
+    <div className="app-container">
+      {toastMsg && <Toast msg={toastMsg} />}
+      
+      <nav className="navbar">
+        <h3>JOSE'S FILESHARE</h3>
+        <div style={{display:'flex', gap:'1rem', alignItems:'center'}}>
+          <span style={{fontSize:'0.8rem', color:'#888'}}>{user?.username}</span>
+          <button onClick={signOut} className="btn-logout" title="Abmelden"><FaSignOutAlt /></button>
+        </div>
+      </nav>
 
-          <nav className="navbar">
-            <h3>JOSE'S FILESHARE</h3>
-            <div style={{display:'flex', gap:'1rem', alignItems:'center'}}>
-              <span style={{fontSize:'0.8rem', color:'#888'}}>{user?.username}</span>
-              <button onClick={signOut} className="btn-logout" title="Abmelden">
-                <FaSignOutAlt />
-              </button>
-            </div>
-          </nav>
+      <div className="card">
+        <div 
+          className={`drop-zone ${isDragging ? 'active' : ''}`}
+          onDragOver={(e) => {e.preventDefault(); setIsDragging(true)}}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault(); setIsDragging(false);
+            const f = e.dataTransfer.files[0];
+            if (f) { setFile(f); setCustomName(f.name); setProgress(0); }
+          }}
+        >
+          <input type="file" onChange={(e) => {
+            const f = e.target.files[0];
+            if (f) { setFile(f); setCustomName(f.name); setProgress(0); }
+          }} />
+          <FaCloudUploadAlt className="icon-upload" />
+          <p style={{margin:0}}>Datei hierher ziehen</p>
+        </div>
 
-          {/* Card 1: Upload */}
-          <div className="card">
-            <div 
-              className={`drop-zone ${isDragging ? 'active' : ''}`}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-            >
-              <input type="file" onChange={handleFileSelect} />
-              <FaCloudUploadAlt className="icon-upload" />
-              <p style={{margin:0}}>Datei hierher ziehen oder klicken</p>
-              <p style={{fontSize: '0.75rem', color: 'var(--text-muted)', margin:0, marginTop:'5px'}}>
-                S3 Secure Storage
-              </p>
+        {file && (
+          <div className="file-info">
+            <div style={{display:'flex', alignItems:'center', gap:'10px', marginBottom:'10px'}}>
+              {getFileIcon(file.name)}
+              <span style={{fontWeight:'600', fontSize:'0.9rem'}}>{file.name}</span>
             </div>
-
-            {file && (
-              <div className="file-info">
-                <div style={{display:'flex', alignItems:'center', gap:'10px', marginBottom:'10px'}}>
-                  {getFileIcon(file.name)}
-                  <span style={{fontWeight:'600', fontSize:'0.9rem'}}>{file.name}</span>
-                </div>
-                <label style={{fontSize:'0.8rem', color:'#ccc'}}>Dateiname auf Server:</label>
-                <input
-                  type="text"
-                  value={customName}
-                  onChange={(e) => setCustomName(e.target.value)}
-                  className="modern-input"
-                />
-                {isUploading ? (
-                  <div className="progress-container">
-                    <div className="progress-fill" style={{width: `${progress}%`}}></div>
-                  </div>
-                ) : (
-                  <button onClick={handleUpload} className="btn-primary">
-                    Hochladen starten
-                  </button>
-                )}
-              </div>
+            <input type="text" value={customName} onChange={(e) => setCustomName(e.target.value)} className="modern-input" />
+            {isUploading ? (
+              <div className="progress-container"><div className="progress-fill" style={{width: `${progress}%`}}></div></div>
+            ) : (
+              <button onClick={handleUpload} className="btn-primary">Hochladen & Link erstellen</button>
             )}
           </div>
+        )}
+      </div>
 
-          {/* Card 2: Deine Dateien (Liste) */}
-          {uploadHistory.length > 0 && (
-            <div className="card history-container">
-              <h3><FaListAlt /> Deine Dateien</h3>
-              <div className="history-list">
-                {uploadHistory.map((item, index) => (
-                  <div key={item.id} className="history-item">
-                    <div className="file-meta">
-                      <div className="file-icon">{getFileIcon(item.name)}</div>
-                      <div className="file-details">
-                        <span className="filename">{item.name}</span>
-                        <span className="filedate">Hochgeladen um {item.date}</span>
-                      </div>
-                    </div>
-                    
-                    <div className="action-row">
-                      <input readOnly value={item.url} className="link-input" />
-                      <button 
-                        className={`btn-icon ${copiedId === item.id ? 'success' : ''}`}
-                        onClick={() => copyToClipboard(item.url, item.id)}
-                        title="Link kopieren"
-                      >
-                        {copiedId === item.id ? <FaCheckCircle /> : <FaCopy />}
-                      </button>
-                    </div>
-
-                    {/* QR Code nur beim neuesten Item automatisch */}
-                    {index === 0 && (
-                      <div className="qr-box">
-                         <QRCodeSVG value={item.url} size={100} />
-                      </div>
-                    )}
+      {uploadHistory.length > 0 && (
+        <div className="card history-container">
+          <h3><FaListAlt /> Deine Dateien</h3>
+          <div className="history-list">
+            {uploadHistory.map((item, index) => (
+              <div key={item.id} className="history-item">
+                <div className="file-meta">
+                  <div className="file-icon">{getFileIcon(item.name)}</div>
+                  <div className="file-details">
+                    <span className="filename">{item.name}</span>
+                    <span className="filedate">{item.date}</span>
                   </div>
-                ))}
+                </div>
+                <div className="action-row">
+                  <input readOnly value={item.url} className="link-input" />
+                  <button className="btn-icon" onClick={() => {
+                    navigator.clipboard.writeText(item.url);
+                    setCopiedId(item.id);
+                    setTimeout(() => setCopiedId(null), 2000);
+                  }}>
+                    {copiedId === item.id ? <FaCheckCircle /> : <FaCopy />}
+                  </button>
+                </div>
+                {/* Jetzt ist der QR Code super lesbar, weil die URL kurz ist! */}
+                {index === 0 && (
+                  <div className="qr-box">
+                     <QRCodeSVG value={item.url} size={150} level={"M"} includeMargin={true} />
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            ))}
+          </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// --- 4. Main App Switcher ---
+function App() {
+  // Prüfe, ob wir im "Download Modus" sind (via URL Parameter ?file=...)
+  const params = new URLSearchParams(window.location.search);
+  const shareFile = params.get('file');
+
+  if (shareFile) {
+    // Zeige Download-Seite für GÄSTE (Kein Authenticator!)
+    return <DownloadView filename={shareFile} />;
+  }
+
+  // Zeige Admin-Bereich (Mit Login)
+  return (
+    <Authenticator>
+      {(props) => <AdminView {...props} />}
     </Authenticator>
-  )
+  );
 }
 
 export default App
