@@ -17,6 +17,12 @@
       },
       "storage": {
         "joseFileshare": {}
+      },
+      "hosting": {
+        "amplifyhosting": {
+          "appId": "d1zkgmgz19iof7",
+          "type": "manual"
+        }
       }
     }
   }
