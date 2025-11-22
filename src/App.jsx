@@ -135,7 +135,7 @@ function App() {
               >
                 <input type="file" onChange={handleFileSelect} />
                 <FaCloudUploadAlt className="icon-upload" />
-                <p>Datei hierher ziehen oder <strong>klicken</strong></p>
+                <p>Datei hierher ziehen oder penis  <strong>klicken</strong></p>
                 <p style={{fontSize: '0.8rem', color: 'var(--text-muted)'}}>S3 Secure Storage</p>
               </div>
 
