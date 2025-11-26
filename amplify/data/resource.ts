@@ -9,8 +9,8 @@ const schema = a.schema({
       downloadUrl: a.string(),
     })
     .authorization((allow) => [
-      allow.owner(), // Besitzer darf alles
-      allow.guest().to(['read']) // WICHTIG: Gäste dürfen lesen (für den Download-Link)
+      allow.owner(), // User darf seine eigenen Dateien verwalten
+      allow.guest().to(['read']) // Gäste dürfen lesen (für den Download-Link)
     ]),
 });
 
@@ -20,7 +20,6 @@ export const data = defineData({
   schema,
   authorizationModes: {
     defaultAuthorizationMode: 'userPool',
-    // Wir fügen IAM hinzu, damit Gäste (Identity Pool) zugreifen dürfen
     apiKeyAuthorizationMode: {
       expiresInDays: 30,
     },
