@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { uploadData, getUrl, list, remove, getProperties } from 'aws-amplify/storage' // 'getProperties' neu importiert
+import { uploadData, getUrl, remove, getProperties } from 'aws-amplify/storage'
 import { generateClient } from 'aws-amplify/data'
 import { Authenticator } from '@aws-amplify/ui-react'
 import { QRCodeSVG } from 'qrcode.react'
@@ -29,26 +29,37 @@ const Toast = ({ msg }) => (
   </div>
 );
 
-// --- 2. Download Mode (Mit 30-Tage Prüfung) ---
-function DownloadView({ filename }) {
+// --- 2. Download Mode (ID-basiert) ---
+function DownloadView({ fileId }) {
   const [downloadUrl, setDownloadUrl] = useState('');
+  const [fileName, setFileName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const checkAndFetch = async () => {
+    const resolveFile = async () => {
       try {
-        const path = `public/${filename}`;
+        // 1. Datenbank fragen: Welche Datei gehört zu dieser ID?
+        // Wir nutzen "authMode: 'identityPool'", damit auch Gäste lesen dürfen
+        const { data: record } = await client.models.UserFile.get(
+          { id: fileId }, 
+          { authMode: 'identityPool' } 
+        );
 
-        // 1. Metadaten abrufen (Wann wurde die Datei hochgeladen?)
+        if (!record) {
+          throw new Error("Eintrag nicht in Datenbank gefunden.");
+        }
+
+        setFileName(record.customName);
+        const path = record.filePath;
+
+        // 2. 30-Tage-Check (via S3 Metadaten)
         const props = await getProperties({ path });
         
         if (props.lastModified) {
           const now = new Date();
           const uploadDate = new Date(props.lastModified);
-          // Differenz in Tagen berechnen
-          const diffTime = Math.abs(now - uploadDate);
-          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          const diffDays = Math.ceil(Math.abs(now - uploadDate) / (1000 * 60 * 60 * 24));
 
           if (diffDays > 30) {
             setError('Dieser Link ist abgelaufen (älter als 30 Tage).');
@@ -57,48 +68,50 @@ function DownloadView({ filename }) {
           }
         }
 
-        // 2. Wenn jünger als 30 Tage: Link generieren
+        // 3. Gültigen S3-Link generieren
         const linkResult = await getUrl({
           path: path,
           options: { validateObjectExistence: true, expiresIn: 900 },
         });
         setDownloadUrl(linkResult.url.toString());
+
       } catch (err) {
         console.error(err);
-        setError('Datei nicht gefunden oder Zugriff verweigert.');
+        setError('Datei nicht gefunden oder Link ungültig.');
       } finally {
         setLoading(false);
       }
     };
-    checkAndFetch();
-  }, [filename]);
+    resolveFile();
+  }, [fileId]);
 
   return (
     <div className="app-container" style={{textAlign: 'center', marginTop: '10vh'}}>
       <div className="card">
-        <h2>Datei Bereitstellung</h2>
+        <h2>Datei Download</h2>
         
-        {/* Icon Animation */}
         <div style={{fontSize: '4rem', margin: '2rem 0', color: error ? 'var(--text-muted)' : 'var(--accent)', transition: 'color 0.3s'}}>
-          {error ? <FaExclamationTriangle /> : getFileIcon(filename)}
+          {error ? <FaExclamationTriangle /> : getFileIcon(fileName)}
         </div>
         
-        <h3 style={{wordBreak: 'break-all', marginBottom: '1.5rem'}}>{filename}</h3>
+        <h3 style={{wordBreak: 'break-all', marginBottom: '1.5rem'}}>
+          {loading ? 'Lade Informationen...' : (fileName || 'Unbekannte Datei')}
+        </h3>
         
         {loading ? (
-          <p><FaSpinner className="icon-spin" /> Prüfe Gültigkeit...</p>
+          <p><FaSpinner className="icon-spin" /> Suche Datei...</p>
         ) : error ? (
-          <div style={{color: '#ff6b6b', background: 'rgba(255,0,0,0.1)', padding: '1rem', borderRadius: '8px'}}>
-            <strong>Link ungültig</strong><br/>
+          <div style={{color: '#dc3545', background: '#fff5f5', padding: '1rem', borderRadius: '8px', border: '1px solid #dc3545'}}>
+            <strong>Fehler</strong><br/>
             {error}
           </div>
         ) : (
           <div>
             <a href={downloadUrl} className="btn-primary" style={{textDecoration: 'none', display:'inline-flex', alignItems: 'center', gap: '10px', justifyContent: 'center'}}>
-              <FaDownload /> Datei herunterladen
+              <FaDownload /> Herunterladen
             </a>
             <p style={{fontSize: '0.8rem', color: 'var(--success)', marginTop: '1rem'}}>
-              <FaCheckCircle style={{verticalAlign: 'middle'}}/> Link ist aktiv (Gültig für 30 Tage)
+              <FaCheckCircle style={{verticalAlign: 'middle'}}/> Sicherer Download
             </p>
           </div>
         )}
@@ -110,7 +123,7 @@ function DownloadView({ filename }) {
   );
 }
 
-// --- 3. Admin Mode (Bleibt gleich) ---
+// --- 3. Admin Mode ---
 function AdminView({ signOut, user }) {
   const [file, setFile] = useState(null)
   const [customName, setCustomName] = useState('')
@@ -121,11 +134,15 @@ function AdminView({ signOut, user }) {
   const [copiedId, setCopiedId] = useState(null)
   const [toastMsg, setToastMsg] = useState('')
 
+  // Email-Adresse sicher extrahieren
+  const userEmail = user?.signInDetails?.loginId || user?.username || 'Benutzer';
+
   useEffect(() => { fetchFiles(); }, []);
 
   const fetchFiles = async () => {
     try {
       const { data: items } = await client.models.UserFile.list({ authMode: 'userPool' });
+      // Sortieren nach Erstellungsdatum
       const sortedItems = items.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
       setFileList(sortedItems);
     } catch (error) { console.error(error); }
@@ -157,8 +174,8 @@ function AdminView({ signOut, user }) {
     setIsUploading(true);
     try {
       const s3Path = `public/${customName}`;
-      const shortLink = `${window.location.origin}/?file=${encodeURIComponent(customName)}`;
-
+      
+      // 1. Upload S3
       await uploadData({
         path: s3Path,
         data: file,
@@ -169,15 +186,25 @@ function AdminView({ signOut, user }) {
         },
       }).result;
 
-      await client.models.UserFile.create({
+      // 2. Datenbank Eintrag erstellen
+      const { data: newRecord } = await client.models.UserFile.create({
         customName: customName,
         filePath: s3Path,
         fileSize: parseFloat((file.size / 1024 / 1024).toFixed(2)),
+        downloadUrl: '' // Platzhalter, wird gleich aktualisiert
+      });
+
+      // 3. Kurzen Link generieren mit der DB-ID (UUID)
+      const shortLink = `${window.location.origin}/?id=${newRecord.id}`;
+
+      // 4. Link in DB speichern
+      await client.models.UserFile.update({
+        id: newRecord.id,
         downloadUrl: shortLink
       });
 
       navigator.clipboard.writeText(shortLink);
-      setToastMsg('Gespeichert & Link kopiert! 📋');
+      setToastMsg('Hochgeladen & Link kopiert! 📋');
       await fetchFiles();
       setIsUploading(false); setFile(null); setCustomName(''); setProgress(0);
     } catch (error) {
@@ -186,13 +213,13 @@ function AdminView({ signOut, user }) {
   }
 
   const handleDelete = async (id, filePath) => {
-    if(!window.confirm("Möchtest du diese Datei wirklich löschen?")) return;
+    if(!window.confirm("Datei wirklich löschen?")) return;
     try {
       await remove({ path: filePath });
       await client.models.UserFile.delete({ id });
-      setToastMsg('Datei gelöscht 🗑️');
+      setToastMsg('Gelöscht 🗑️');
       await fetchFiles(); 
-    } catch (error) { setToastMsg('Löschen fehlgeschlagen: ' + error.message); }
+    } catch (error) { setToastMsg('Fehler: ' + error.message); }
   };
 
   return (
@@ -201,7 +228,7 @@ function AdminView({ signOut, user }) {
       <nav className="navbar">
         <h3>JOSE'S FILESHARE</h3>
         <div style={{display:'flex', gap:'1rem', alignItems:'center'}}>
-          <span style={{fontSize:'0.8rem', color:'#888'}}>{user?.username}</span>
+          <span style={{fontSize:'0.9rem', fontWeight:'500'}}>{userEmail}</span>
           <button onClick={signOut} className="btn-logout" title="Abmelden"><FaSignOutAlt /></button>
         </div>
       </nav>
@@ -213,7 +240,7 @@ function AdminView({ signOut, user }) {
         >
           <input type="file" onChange={handleFileSelect} />
           <FaCloudUploadAlt className="icon-upload" />
-          <p style={{margin:0}}>Datei hierher ziehen</p>
+          <p style={{margin:0, fontWeight:500}}>Datei hierher ziehen oder klicken</p>
         </div>
         {file && (
           <div className="file-info">
@@ -225,7 +252,7 @@ function AdminView({ signOut, user }) {
             {isUploading ? (
               <div className="progress-container"><div className="progress-fill" style={{width: `${progress}%`}}></div></div>
             ) : (
-              <button onClick={handleUpload} className="btn-primary">Hochladen & Link erstellen</button>
+              <button onClick={handleUpload} className="btn-primary">Hochladen</button>
             )}
           </div>
         )}
@@ -245,16 +272,17 @@ function AdminView({ signOut, user }) {
                   </div>
                 </div>
                 <div className="action-row">
-                  <input readOnly value={item.downloadUrl} className="link-input" />
+                  {/* Link Input ist jetzt schreibgeschützt und zeigt den kurzen Link */}
+                  <input readOnly value={item.downloadUrl} className="link-input" onClick={(e) => e.target.select()}/>
                   <button className="btn-icon" onClick={() => {navigator.clipboard.writeText(item.downloadUrl); setCopiedId(item.id); setTimeout(() => setCopiedId(null), 2000);}} title="Kopieren">
                     {copiedId === item.id ? <FaCheckCircle /> : <FaCopy />}
                   </button>
-                  <button className="btn-icon" style={{backgroundColor: 'rgba(255, 0, 0, 0.2)', color: '#ff6b6b'}} onClick={() => handleDelete(item.id, item.filePath)} title="Löschen">
+                  <button className="btn-icon delete" onClick={() => handleDelete(item.id, item.filePath)} title="Löschen">
                     <FaTrash />
                   </button>
                 </div>
                 {index === 0 && (
-                  <div className="qr-box" style={{background: 'white', padding: '10px', borderRadius: '8px', marginTop: '10px', display: 'flex', justifyContent: 'center'}}>
+                  <div className="qr-box" style={{display: 'flex', justifyContent: 'center'}}>
                      <QRCodeSVG value={item.downloadUrl} size={150} level={"L"} includeMargin={true} />
                   </div>
                 )}
@@ -270,9 +298,17 @@ function AdminView({ signOut, user }) {
 // --- 4. Main App Switcher ---
 function App() {
   const params = new URLSearchParams(window.location.search);
-  const shareFile = params.get('file');
-  if (shareFile) return <DownloadView filename={shareFile} />;
-  return <Authenticator>{(props) => <AdminView {...props} />}</Authenticator>;
+  const fileId = params.get('id'); // Wir suchen jetzt nach ?id=...
+
+  if (fileId) {
+    return <DownloadView fileId={fileId} />;
+  }
+
+  return (
+    <Authenticator>
+      {(props) => <AdminView {...props} />}
+    </Authenticator>
+  );
 }
 
 export default App

@@ -1,19 +1,17 @@
 import { type ClientSchema, a, defineData } from '@aws-amplify/backend';
 
-/*== STEP 1 ===============================================================
-Wir definieren ein Datenbank-Modell "UserFile".
-Die Autorisierungsregel "allow.owner()" sorgt dafür, dass jeder User
-automatisch nur SEINE EIGENEN Einträge sieht, erstellt oder löscht.
-=========================================================================*/
 const schema = a.schema({
   UserFile: a
     .model({
-      customName: a.string(),   // Der Name, den du eingibst
-      filePath: a.string(),     // Der Pfad in S3 (z.B. public/meinBild.jpg)
-      fileSize: a.float(),      // Dateigröße in MB
-      downloadUrl: a.string(),  // Der generierte Smart-Link
+      customName: a.string(),
+      filePath: a.string(),
+      fileSize: a.float(),
+      downloadUrl: a.string(),
     })
-    .authorization((allow) => [allow.owner()]),
+    .authorization((allow) => [
+      allow.owner(), // Besitzer darf alles
+      allow.guest().to(['read']) // WICHTIG: Gäste dürfen lesen (für den Download-Link)
+    ]),
 });
 
 export type Schema = ClientSchema<typeof schema>;
@@ -22,5 +20,9 @@ export const data = defineData({
   schema,
   authorizationModes: {
     defaultAuthorizationMode: 'userPool',
+    // Wir fügen IAM hinzu, damit Gäste (Identity Pool) zugreifen dürfen
+    apiKeyAuthorizationMode: {
+      expiresInDays: 30,
+    },
   },
 });
