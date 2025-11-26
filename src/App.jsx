@@ -283,14 +283,19 @@ function AdminView({ signOut, user }) {
 // --- 4. Main App Switcher ---
 function App() {
   const params = new URLSearchParams(window.location.search);
-  const fileId = params.get('id'); 
+  const shareFile = params.get('file');
+  // Alte Pfad-Logik zur Sicherheit auch abfangen, falls alte Links existieren
+  const sharePath = params.get('path'); 
+  // Neue ID-Logik
+  const fileId = params.get('id');
 
-  if (fileId) {
-    return <DownloadView fileId={fileId} />;
-  }
+  if (fileId) return <DownloadView fileId={fileId} />;
+  if (shareFile) return <DownloadView filename={shareFile} />; // Fallback für alte Links
+  if (sharePath) return <DownloadView path={sharePath} />;     // Fallback für ganz alte Links
 
   return (
-    <Authenticator>
+    // HIER IST DIE ÄNDERUNG: hideSignUp={true}
+    <Authenticator hideSignUp={true}>
       {(props) => <AdminView {...props} />}
     </Authenticator>
   );
