@@ -29,7 +29,7 @@ const Toast = ({ msg }) => (
   </div>
 );
 
-// --- 2. Download Mode (ID-basiert) ---
+// --- 2. Download Mode (ID-basiert, für Gäste) ---
 function DownloadView({ fileId }) {
   const [downloadUrl, setDownloadUrl] = useState('');
   const [fileName, setFileName] = useState('');
@@ -39,36 +39,29 @@ function DownloadView({ fileId }) {
   useEffect(() => {
     const resolveFile = async () => {
       try {
-        // 1. Datenbank fragen: Welche Datei gehört zu dieser ID?
-        // Wir nutzen "authMode: 'identityPool'", damit auch Gäste lesen dürfen
+        // 1. Datenbank fragen (MIT API KEY für Gäste)
         const { data: record } = await client.models.UserFile.get(
           { id: fileId }, 
-          { authMode: 'identityPool' } 
+          { authMode: 'apiKey' } 
         );
 
-        if (!record) {
-          throw new Error("Eintrag nicht in Datenbank gefunden.");
-        }
+        if (!record) throw new Error("Datei nicht gefunden.");
 
         setFileName(record.customName);
         const path = record.filePath;
 
-        // 2. 30-Tage-Check (via S3 Metadaten)
+        // 2. 30-Tage-Check
         const props = await getProperties({ path });
-        
         if (props.lastModified) {
-          const now = new Date();
-          const uploadDate = new Date(props.lastModified);
-          const diffDays = Math.ceil(Math.abs(now - uploadDate) / (1000 * 60 * 60 * 24));
-
+          const diffDays = Math.ceil(Math.abs(new Date() - new Date(props.lastModified)) / (1000 * 60 * 60 * 24));
           if (diffDays > 30) {
-            setError('Dieser Link ist abgelaufen (älter als 30 Tage).');
+            setError('Link abgelaufen (älter als 30 Tage).');
             setLoading(false);
             return;
           }
         }
 
-        // 3. Gültigen S3-Link generieren
+        // 3. Link generieren
         const linkResult = await getUrl({
           path: path,
           options: { validateObjectExistence: true, expiresIn: 900 },
@@ -77,7 +70,7 @@ function DownloadView({ fileId }) {
 
       } catch (err) {
         console.error(err);
-        setError('Datei nicht gefunden oder Link ungültig.');
+        setError('Datei nicht gefunden oder gelöscht.');
       } finally {
         setLoading(false);
       }
@@ -89,21 +82,19 @@ function DownloadView({ fileId }) {
     <div className="app-container" style={{textAlign: 'center', marginTop: '10vh'}}>
       <div className="card">
         <h2>Datei Download</h2>
-        
-        <div style={{fontSize: '4rem', margin: '2rem 0', color: error ? 'var(--text-muted)' : 'var(--accent)', transition: 'color 0.3s'}}>
+        <div style={{fontSize: '4rem', margin: '2rem 0', color: error ? 'var(--text-muted)' : 'var(--accent)'}}>
           {error ? <FaExclamationTriangle /> : getFileIcon(fileName)}
         </div>
         
         <h3 style={{wordBreak: 'break-all', marginBottom: '1.5rem'}}>
-          {loading ? 'Lade Informationen...' : (fileName || 'Unbekannte Datei')}
+          {loading ? 'Suche Datei...' : (fileName || 'Unbekannt')}
         </h3>
         
         {loading ? (
-          <p><FaSpinner className="icon-spin" /> Suche Datei...</p>
+          <p><FaSpinner className="icon-spin" /> Bitte warten...</p>
         ) : error ? (
           <div style={{color: '#dc3545', background: '#fff5f5', padding: '1rem', borderRadius: '8px', border: '1px solid #dc3545'}}>
-            <strong>Fehler</strong><br/>
-            {error}
+            <strong>Fehler</strong><br/>{error}
           </div>
         ) : (
           <div>
@@ -116,14 +107,11 @@ function DownloadView({ fileId }) {
           </div>
         )}
       </div>
-      <p style={{marginTop: '2rem', color: '#666', fontSize: '0.8rem'}}>
-        Secure FileShare by Jose
-      </p>
     </div>
   );
 }
 
-// --- 3. Admin Mode ---
+// --- 3. Admin Mode (Eingeloggt) ---
 function AdminView({ signOut, user }) {
   const [file, setFile] = useState(null)
   const [customName, setCustomName] = useState('')
@@ -134,15 +122,15 @@ function AdminView({ signOut, user }) {
   const [copiedId, setCopiedId] = useState(null)
   const [toastMsg, setToastMsg] = useState('')
 
-  // Email-Adresse sicher extrahieren
-  const userEmail = user?.signInDetails?.loginId || user?.username || 'Benutzer';
+  // Email anzeigen
+  const userEmail = user?.signInDetails?.loginId || user?.username;
 
   useEffect(() => { fetchFiles(); }, []);
 
+  // Dateien laden (DB-Query)
   const fetchFiles = async () => {
     try {
       const { data: items } = await client.models.UserFile.list({ authMode: 'userPool' });
-      // Sortieren nach Erstellungsdatum
       const sortedItems = items.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
       setFileList(sortedItems);
     } catch (error) { console.error(error); }
@@ -155,27 +143,26 @@ function AdminView({ signOut, user }) {
     }
   }, [toastMsg]);
 
+  // Drag & Drop Logik
   const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true); }
   const handleDragLeave = () => { setIsDragging(false); }
-  const handleDrop = (e) => {
-    e.preventDefault(); setIsDragging(false);
-    const f = e.dataTransfer.files[0];
-    if (f) processFile(f);
-  }
-  const handleFileSelect = (e) => { const f = e.target.files[0]; if (f) processFile(f); }
+  const handleDrop = (e) => { e.preventDefault(); setIsDragging(false); if (e.dataTransfer.files[0]) processFile(e.dataTransfer.files[0]); }
+  const handleFileSelect = (e) => { if (e.target.files[0]) processFile(e.target.files[0]); }
+  
   const processFile = (fileData) => {
     setFile(fileData);
     setCustomName(fileData.name);
     setProgress(0);
   }
 
+  // Upload Logik
   const handleUpload = async () => {
     if (!file || !customName) return;
     setIsUploading(true);
     try {
-      const s3Path = `public/${customName}`;
+      const s3Path = `public/${customName}`; // Pfad im Bucket
       
-      // 1. Upload S3
+      // 1. Upload
       await uploadData({
         path: s3Path,
         data: file,
@@ -186,18 +173,18 @@ function AdminView({ signOut, user }) {
         },
       }).result;
 
-      // 2. Datenbank Eintrag erstellen
+      // 2. DB Eintrag
       const { data: newRecord } = await client.models.UserFile.create({
         customName: customName,
         filePath: s3Path,
         fileSize: parseFloat((file.size / 1024 / 1024).toFixed(2)),
-        downloadUrl: '' // Platzhalter, wird gleich aktualisiert
+        downloadUrl: '' // Placeholder
       });
 
-      // 3. Kurzen Link generieren mit der DB-ID (UUID)
+      // 3. Smart Link mit ID generieren
       const shortLink = `${window.location.origin}/?id=${newRecord.id}`;
-
-      // 4. Link in DB speichern
+      
+      // 4. DB Update
       await client.models.UserFile.update({
         id: newRecord.id,
         downloadUrl: shortLink
@@ -206,12 +193,14 @@ function AdminView({ signOut, user }) {
       navigator.clipboard.writeText(shortLink);
       setToastMsg('Hochgeladen & Link kopiert! 📋');
       await fetchFiles();
+      
       setIsUploading(false); setFile(null); setCustomName(''); setProgress(0);
     } catch (error) {
       setIsUploading(false); setToastMsg('Fehler: ' + error.message);
     }
   }
 
+  // Löschen
   const handleDelete = async (id, filePath) => {
     if(!window.confirm("Datei wirklich löschen?")) return;
     try {
@@ -219,7 +208,7 @@ function AdminView({ signOut, user }) {
       await client.models.UserFile.delete({ id });
       setToastMsg('Gelöscht 🗑️');
       await fetchFiles(); 
-    } catch (error) { setToastMsg('Fehler: ' + error.message); }
+    } catch (error) { setToastMsg('Fehler beim Löschen'); }
   };
 
   return (
@@ -272,7 +261,6 @@ function AdminView({ signOut, user }) {
                   </div>
                 </div>
                 <div className="action-row">
-                  {/* Link Input ist jetzt schreibgeschützt und zeigt den kurzen Link */}
                   <input readOnly value={item.downloadUrl} className="link-input" onClick={(e) => e.target.select()}/>
                   <button className="btn-icon" onClick={() => {navigator.clipboard.writeText(item.downloadUrl); setCopiedId(item.id); setTimeout(() => setCopiedId(null), 2000);}} title="Kopieren">
                     {copiedId === item.id ? <FaCheckCircle /> : <FaCopy />}
@@ -298,7 +286,8 @@ function AdminView({ signOut, user }) {
 // --- 4. Main App Switcher ---
 function App() {
   const params = new URLSearchParams(window.location.search);
-  const fileId = params.get('id'); // Wir suchen jetzt nach ?id=...
+  // Wir suchen nach 'id' für die DB-Lösung
+  const fileId = params.get('id'); 
 
   if (fileId) {
     return <DownloadView fileId={fileId} />;
