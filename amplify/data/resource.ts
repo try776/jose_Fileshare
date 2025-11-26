@@ -9,8 +9,8 @@ const schema = a.schema({
       downloadUrl: a.string(),
     })
     .authorization((allow) => [
-      allow.owner(), // User darf seine eigenen Dateien verwalten
-      allow.guest().to(['read']) // Gäste dürfen lesen (für den Download-Link)
+      allow.owner(), // Besitzer darf alles
+      allow.publicApiKey().to(['read']) // WICHTIG: Hier stand vorher 'guest()', jetzt 'publicApiKey()'
     ]),
 });
 
@@ -20,8 +20,9 @@ export const data = defineData({
   schema,
   authorizationModes: {
     defaultAuthorizationMode: 'userPool',
+    // API Key explizit aktivieren (Gültig für 1 Jahr)
     apiKeyAuthorizationMode: {
-      expiresInDays: 30,
+      expiresInDays: 365,
     },
   },
 });

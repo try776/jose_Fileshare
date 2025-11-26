@@ -39,26 +39,32 @@ function DownloadView({ fileId }) {
   useEffect(() => {
     const resolveFile = async () => {
       try {
-        // 1. Datenbank fragen (MIT API KEY für Gäste)
+        // 1. Datenbank fragen (MIT API KEY!)
+        // Das ist der entscheidende Fix: authMode: 'apiKey'
         const { data: record } = await client.models.UserFile.get(
           { id: fileId }, 
           { authMode: 'apiKey' } 
         );
 
-        if (!record) throw new Error("Datei nicht gefunden.");
+        if (!record) throw new Error("Datei-Eintrag nicht gefunden.");
 
         setFileName(record.customName);
         const path = record.filePath;
 
-        // 2. 30-Tage-Check
-        const props = await getProperties({ path });
-        if (props.lastModified) {
-          const diffDays = Math.ceil(Math.abs(new Date() - new Date(props.lastModified)) / (1000 * 60 * 60 * 24));
-          if (diffDays > 30) {
-            setError('Link abgelaufen (älter als 30 Tage).');
-            setLoading(false);
-            return;
-          }
+        // 2. 30-Tage-Check (S3 Metadaten)
+        try {
+           const props = await getProperties({ path });
+           if (props.lastModified) {
+             const diffDays = Math.ceil(Math.abs(new Date() - new Date(props.lastModified)) / (1000 * 60 * 60 * 24));
+             if (diffDays > 30) {
+               setError('Link abgelaufen (älter als 30 Tage).');
+               setLoading(false);
+               return;
+             }
+           }
+        } catch (e) {
+            // Falls Datei schon gelöscht, aber DB Eintrag noch da
+            throw new Error("Datei existiert nicht mehr.");
         }
 
         // 3. Link generieren
@@ -70,7 +76,7 @@ function DownloadView({ fileId }) {
 
       } catch (err) {
         console.error(err);
-        setError('Datei nicht gefunden oder gelöscht.');
+        setError('Datei nicht gefunden oder Link ungültig.');
       } finally {
         setLoading(false);
       }
@@ -122,12 +128,10 @@ function AdminView({ signOut, user }) {
   const [copiedId, setCopiedId] = useState(null)
   const [toastMsg, setToastMsg] = useState('')
 
-  // Email anzeigen
   const userEmail = user?.signInDetails?.loginId || user?.username;
 
   useEffect(() => { fetchFiles(); }, []);
 
-  // Dateien laden (DB-Query)
   const fetchFiles = async () => {
     try {
       const { data: items } = await client.models.UserFile.list({ authMode: 'userPool' });
@@ -143,7 +147,6 @@ function AdminView({ signOut, user }) {
     }
   }, [toastMsg]);
 
-  // Drag & Drop Logik
   const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true); }
   const handleDragLeave = () => { setIsDragging(false); }
   const handleDrop = (e) => { e.preventDefault(); setIsDragging(false); if (e.dataTransfer.files[0]) processFile(e.dataTransfer.files[0]); }
@@ -155,14 +158,12 @@ function AdminView({ signOut, user }) {
     setProgress(0);
   }
 
-  // Upload Logik
   const handleUpload = async () => {
     if (!file || !customName) return;
     setIsUploading(true);
     try {
-      const s3Path = `public/${customName}`; // Pfad im Bucket
+      const s3Path = `public/${customName}`;
       
-      // 1. Upload
       await uploadData({
         path: s3Path,
         data: file,
@@ -173,18 +174,15 @@ function AdminView({ signOut, user }) {
         },
       }).result;
 
-      // 2. DB Eintrag
       const { data: newRecord } = await client.models.UserFile.create({
         customName: customName,
         filePath: s3Path,
         fileSize: parseFloat((file.size / 1024 / 1024).toFixed(2)),
-        downloadUrl: '' // Placeholder
+        downloadUrl: '' 
       });
 
-      // 3. Smart Link mit ID generieren
       const shortLink = `${window.location.origin}/?id=${newRecord.id}`;
       
-      // 4. DB Update
       await client.models.UserFile.update({
         id: newRecord.id,
         downloadUrl: shortLink
@@ -200,7 +198,6 @@ function AdminView({ signOut, user }) {
     }
   }
 
-  // Löschen
   const handleDelete = async (id, filePath) => {
     if(!window.confirm("Datei wirklich löschen?")) return;
     try {
@@ -286,7 +283,6 @@ function AdminView({ signOut, user }) {
 // --- 4. Main App Switcher ---
 function App() {
   const params = new URLSearchParams(window.location.search);
-  // Wir suchen nach 'id' für die DB-Lösung
   const fileId = params.get('id'); 
 
   if (fileId) {
